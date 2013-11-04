@@ -80,8 +80,9 @@
                            :content-length t
                            :want-stream t)
     (declare (ignore headers))
-    (let ((json-reply (jso->sstruct (st-json:read-json response-stream))))
-      (translate-stripe-http-code code json-reply method url parameters))))
+    (with-open-stream (stream response-stream)
+      (let ((json-reply (jso->sstruct (st-json:read-json stream))))
+        (translate-stripe-http-code code json-reply method url parameters)))))
 
 (let ((card-valid-keys '("number" "exp_month" "exp_year" "cvc" "name"
                          "address_line1" "address_line2" "address_zip"
@@ -109,9 +110,13 @@
       (translate-request-parameter name (sstruct->jso key-values)))
     
     (:method ((name (eql :card)) (key-values t))
-      (error "Don't know how to translate ~s to a card spec dictionary"
-             key-values))
+      (if key-values 
+          (error "Don't know how to translate ~s to a card spec dictionary"
+                 key-values)))
 
+    (:method ((name (eql :api-key)) (key-values t))
+      "Don't pass :api-key through, it is not a valid request parameter"
+      nil)
     (:method ((name symbol) (value string))
       (list (cons (substitute #\_ #\- (string-downcase (string name))) value)))
 
@@ -119,7 +124,12 @@
       (translate-request-parameter name (write-to-string value)))
     
     (:method ((name string) (value string))
-      (list (cons name value)))))
+      (list (cons name value)))
+    (:method (name (value null))
+      "ignore keys with null values"
+      nil
+      )
+    ))
 
 (defun translate-request-parameters (parameters)
   "Translate PLIST parameters into an ALIST that drakma likes."
@@ -151,7 +161,7 @@
          (args (when (consp object-and-args)
                  (cdr object-and-args))))
     (destructuring-bind (&key (http-resource object) id (return-id id)) args
-      (let ((function-name (format-symbol :stripe '#:~a-~a verb object)))
+      (let ((function-name (format-symbol :stripe "~a-~a" verb object)))
         (assert (external-symbol-p function-name *package*))
        `(defun ,function-name
             (,@(when id `(id))
